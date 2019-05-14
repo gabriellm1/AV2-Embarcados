@@ -104,15 +104,16 @@
 //butao 1 oled
 #define EBUT1_PIO PIOD 
 #define EBUT1_PIO_ID 16
-#define EBUT1_PIO_IDX 28
+#define EBUT1_PIO_IDX 28u
 #define EBUT1_PIO_IDX_MASK (1u << EBUT1_PIO_IDX)
 
 
 //butao 3 oled
 #define EBUT3_PIO PIOA
 #define EBUT3_PIO_ID 10
-#define EBUT3_PIO_IDX 19
+#define EBUT3_PIO_IDX 19u
 #define EBUT3_PIO_IDX_MASK (1u << EBUT3_PIO_IDX)
+
 /*********/
 
 /********PWM*********/
@@ -261,18 +262,21 @@ extern void vApplicationMallocFailedHook(void)
 	configASSERT( ( volatile void * ) NULL );
 }
 
-int conv_pot_temp(uint32_t pot){
-	return (105*pot)/4095 ;
+uint32_t conv_pot_temp(uint32_t pot){
+
+		return (105*pot)/4095 ;
+
 }
 
 /************************************************************************/
 /* init                                                                 */
 /************************************************************************/
+
+
 /** Semaforo a ser usado pela task_leitura */
 SemaphoreHandle_t xS_temperature;
 SemaphoreHandle_t xS_potencia_mais;
 SemaphoreHandle_t xS_potencia_menos;
-uint32_t temperatura = 1600;
 
 static void AFEC_Temp_callback(void)
 {
@@ -282,11 +286,14 @@ static void AFEC_Temp_callback(void)
 
 
 static void aumenta_potencia_callback(void){
-	 	xSemaphoreGiveFromISR(xS_potencia_mais, NULL);
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	 	xSemaphoreGiveFromISR(xS_potencia_mais, &xHigherPriorityTaskWoken);
 }
 	
 static void diminui_potencia_callback(void){
-		xSemaphoreGiveFromISR(xS_potencia_menos,NULL);
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+		xSemaphoreGiveFromISR(xS_potencia_menos,&xHigherPriorityTaskWoken);
 }
 
 static void config_POT(void){
@@ -330,6 +337,46 @@ static void config_POT(void){
 
 	/* Selecina canal e inicializa conversão */
 	afec_channel_enable(AFEC0, AFEC_CHANNEL_TEMP_SENSOR);
+}
+
+void io_init(void) {
+
+	// Configura led
+	pmc_enable_periph_clk(EBUT1_PIO_ID);
+	pio_configure(EBUT1_PIO, PIO_INPUT, EBUT1_PIO_IDX_MASK ,PIO_PULLUP | PIO_DEBOUNCE);
+
+
+	pmc_enable_periph_clk(EBUT3_PIO_ID);
+	pio_configure(EBUT3_PIO, PIO_INPUT, EBUT3_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+
+	// Configura interrup??o no pino referente ao botao e associa
+	// fun??o de callback caso uma interrup??o for gerada
+	// a fun??o de callback ? a: but_callback()
+	pio_handler_set(EBUT1_PIO,
+	EBUT1_PIO_ID,
+	EBUT1_PIO_IDX_MASK,
+	PIO_IT_FALL_EDGE,
+	diminui_potencia_callback);
+
+	pio_handler_set(EBUT3_PIO,
+	EBUT3_PIO_ID,
+	EBUT3_PIO_IDX_MASK,
+	PIO_IT_FALL_EDGE,
+	aumenta_potencia_callback);
+	// Ativa interrup??o
+	pio_enable_interrupt(EBUT1_PIO, EBUT1_PIO_IDX_MASK);
+
+	// Configura NVIC para receber interrupcoes do PIO do botao
+	// com prioridade 4 (quanto mais pr?ximo de 0 maior)
+	NVIC_EnableIRQ(EBUT1_PIO_ID);
+	NVIC_SetPriority(EBUT1_PIO_ID, 4); // Prioridade
+	
+	pio_enable_interrupt(EBUT3_PIO, EBUT3_PIO_IDX_MASK);
+
+	// Configura NVIC para receber interrupcoes do PIO do botao
+	// com prioridade 4 (quanto mais pr?ximo de 0 maior)
+	NVIC_EnableIRQ(EBUT3_PIO_ID);
+	NVIC_SetPriority(EBUT3_PIO_ID, 4); // Prioridade 4
 }
 
 static void configure_lcd(void){
@@ -440,6 +487,8 @@ static void mxt_init(struct mxt_device *device)
 /* funcoes                                                              */
 /************************************************************************/
 
+
+
 void draw_screen(void) {
 	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
 	ili9488_draw_filled_rectangle(0, 0, ILI9488_LCD_WIDTH-1, ILI9488_LCD_HEIGHT-1);
@@ -472,39 +521,6 @@ void draw_screen(void) {
 	
 	
 	}
-void io_init(void){
-	pmc_enable_periph_clk(EBUT1_PIO_ID);
-	pmc_enable_periph_clk(EBUT3_PIO_ID);
-	// configura botoes do oled como input
-	pio_set_input(EBUT1_PIO,EBUT1_PIO_IDX_MASK,PIO_DEFAULT);
-	pio_pull_up(EBUT1_PIO,EBUT1_PIO_IDX_MASK,PIO_PULLUP);
-
-	pio_set_input(EBUT3_PIO,EBUT3_PIO_IDX_MASK,PIO_DEFAULT);
-	pio_pull_up(EBUT3_PIO,EBUT3_PIO_IDX_MASK,PIO_PULLUP);
-	
-	pio_handler_set(EBUT1_PIO,
-	EBUT1_PIO_ID,
-	EBUT1_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	diminui_potencia_callback);
-
-	pio_handler_set(EBUT3_PIO,
-	EBUT3_PIO_ID,
-	EBUT3_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	aumenta_potencia_callback);
-	
-	// Ativa interrup??o
-	pio_enable_interrupt(EBUT1_PIO, EBUT1_PIO_IDX_MASK);
-	pio_enable_interrupt(EBUT3_PIO, EBUT3_PIO_IDX_MASK);
-
-
-	NVIC_EnableIRQ(EBUT1_PIO_ID);
-	NVIC_SetPriority(EBUT1_PIO_ID, 0); // Prioridade 0
-
-	NVIC_EnableIRQ(EBUT3_PIO_ID);
-	NVIC_SetPriority(EBUT3_PIO_ID, 0); // Prioridade 0
-}
 
 
 uint32_t convert_axis_system_x(uint32_t touch_y) {
@@ -579,7 +595,7 @@ void task_mxt(void){
 
 void task_lcd(void){
 	xQueueTouch = xQueueCreate( 10, sizeof( touchData ) );
-	//io_init();
+	
 	configure_lcd();
 	
 	
@@ -589,25 +605,26 @@ void task_lcd(void){
 	
 	if (xS_temperature == NULL)
 	printf("falha em criar o semaforo \n");
-  
+	
+	
   draw_screen();
   touchData touch;
     
 	char buffer[32];
+	char buffer2[32];
 	
 	/** The conversion data value */
-	volatile uint32_t g_ul_value = 0;
+	volatile uint32_t g_ul_value;
 	
 	/***/
 	/* Configura pino para ser controlado pelo PWM */
 	pmc_enable_periph_clk(ID_PIO_PWM_0);
 	pio_set_peripheral(PIO_PWM_0, PIO_PERIPH_A, MASK_PIN_PWM_0 );
+	io_init();
+	
 	 uint duty = 0;
 	 PWM0_init(duty, 0);
 	 
-	sprintf(buffer,"%d",duty);
-	font_draw_text(&digital52, buffer, 250, 310, 1);
-	 /***/
 	
   while (true) {  
      if (xQueueReceive( xQueueTouch, &(touch), ( TickType_t )  500 / portTICK_PERIOD_MS)) {
@@ -618,40 +635,36 @@ void task_lcd(void){
 	 {
 		g_ul_value = afec_channel_get_value(AFEC0, AFEC_CHANNEL_POT_SENSOR);
  		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
- 		ili9488_draw_filled_rectangle(230,230,320,280);
+ 		ili9488_draw_filled_rectangle(200,200,320,280);
 		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
 		sprintf(buffer,"%d",conv_pot_temp(g_ul_value));
-		ili9488_draw_string(280,250,buffer);
-		//font_draw_text(&digital52,buffer,230,230,1);
+		ili9488_draw_string(230,250,buffer);
+		//font_draw_text(&digital52,buffer,200,220,1);
 		
 	 }
 	if ( xSemaphoreTake(xS_potencia_mais, ( TickType_t ) 500) == pdTRUE)
 	{
 		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-		ili9488_draw_filled_rectangle(230,310,280,330);
-		duty+=10;
-		pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
-		sprintf(buffer,"%d",duty);
-		font_draw_text(&digital52, buffer, 250, 310, 1);
-		    /* fade in */
-		    for(duty = 0; duty <= 100; duty++){
-			    pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
-			    delay_ms(10);
-		    }
+		ili9488_draw_filled_rectangle(200,300,320,360);
+		duty+=5;
+		pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
+		sprintf(buffer2,"%d",duty);
+		font_draw_text(&digital52, buffer2, 200, 310, 1);
+
 	}
 	if ( xSemaphoreTake(xS_potencia_menos, ( TickType_t ) 500) == pdTRUE)
 	{
 		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-		ili9488_draw_filled_rectangle(250,310,280,330);
-		duty-=10;
-		pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
-		sprintf(buffer,"%d",duty);
-		font_draw_text(&digital52, buffer, 250, 310, 1);
-		    /* fade out*/
-		    for(duty = 0; duty <= 100; duty++){
-			    pwm_channel_update_duty(PWM0, &g_pwm_channel_led, duty);
-			    delay_ms(10);
-		    }
+		ili9488_draw_filled_rectangle(200,300,320,360);
+		if (duty==0){
+			duty=0;
+		}
+		else{duty-=5;}
+
+		pwm_channel_update_duty(PWM0, &g_pwm_channel_led, 100-duty);
+		sprintf(buffer2,"%d",duty);
+		font_draw_text(&digital52, buffer2, 200, 310, 1);
+
 	}
   }	 
 }
@@ -673,7 +686,6 @@ void task_leitura(void){
 }
 
 
-
 /************************************************************************/
 /* main                                                                 */
 /************************************************************************/
@@ -690,7 +702,7 @@ int main(void)
 
 	sysclk_init(); /* Initialize system clocks */
 	board_init();  /* Initialize board */
-	//io_init();
+	
 	/* Initialize stdio on USART */
 	stdio_serial_init(USART_SERIAL_EXAMPLE, &usart_serial_options);
 		
